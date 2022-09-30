@@ -1,170 +1,132 @@
-import numpy as np
-import pickle
-import cv2
-from os import listdir
-from sklearn.preprocessing import LabelBinarizer
-from keras.models import Sequential
-from keras.layers import BatchNormalization
-from keras.layers.convolutional import Conv2D
-from keras.layers.convolutional import Conv2D
-from keras.layers.convolutional import MaxPooling2D
-from keras.layers.core import Activation, Flatten, Dropout, Dense
-from keras import backend as K
-from keras.preprocessing.image import ImageDataGenerator
-from keras.optimizers import Adam
-from keras.preprocessing import image
-from keras.utils import img_to_array
-from sklearn.preprocessing import MultiLabelBinarizer
-from sklearn.model_selection import train_test_split
+from operator import imod
+import tensorflow as tf
+from keras import models, layers
+from keras.layers import Rescaling
+from keras.layers import Resizing
+from keras.layers import RandomFlip
+from keras.losses import SparseCategoricalCrossentropy
+from keras.layers import RandomRotation
 import matplotlib.pyplot as plt
-import tensorflow
-EPOCHS = 100
-INIT_LR = 1e-3
-BS = 32
-default_image_size = tuple((256, 256))
-image_size = 0
-directory_root = 'C:\\Users\\praja\\Documents\\Python programs\\PlantVillage'
-width = 256
-height = 256
-depth = 3
-def convert_image_to_array(image_dir):
-    try:
-        image = cv2.imread(image_dir)
-        if image is not None:
-            image = cv2.resize(image, default_image_size)
-            return img_to_array(image)
-        else:
-            return np.array([])
-    except Exception as e:
-        print(f"Error : {e}")
-        return None
+from keras.utils import image_dataset_from_directory
+from keras import Sequential
+BATCH_SIZE = 32
+IMAGE_SIZE = 256
+CHANNELS=3
+EPOCHS=50
+dataset = image_dataset_from_directory(
+    "PlantVillage",
+    seed=123,
+    shuffle=True,
+    image_size=(IMAGE_SIZE,IMAGE_SIZE),
+    batch_size=BATCH_SIZE
+)
+class_names = dataset.class_names
+class_names
+for image_batch, labels_batch in dataset.take(1):
+    print(image_batch.shape)
+    print(labels_batch.numpy())
+len(dataset)   
+train_size = 0.8
+len(dataset)*train_size
+train_ds = dataset.take(54)
+len(train_ds)
+test_ds = dataset.skip(54)
+len(test_ds)
+val_size=0.1
+len(dataset)*val_size
+val_ds = test_ds.take(6)
+len(val_ds)
+test_ds = test_ds.skip(6)
+len(test_ds)
+def get_dataset_partitions_tf(ds, train_split=0.8, val_split=0.1, test_split=0.1, shuffle=True, shuffle_size=10000):
+    assert (train_split + test_split + val_split) == 1
+    
+    ds_size = len(ds)
+    
+    if shuffle:
+        ds = ds.shuffle(shuffle_size, seed=12)
+    
+    train_size = int(train_split * ds_size)
+    val_size = int(val_split * ds_size)
+    
+    train_ds = ds.take(train_size)    
+    val_ds = ds.skip(train_size).take(val_size)
+    test_ds = ds.skip(train_size).skip(val_size)
+    
+    return train_ds, val_ds, test_ds
+train_ds, val_ds, test_ds = get_dataset_partitions_tf(dataset)
+len(train_ds)
+len(val_ds)
+len(test_ds)
+train_ds = train_ds.cache().shuffle(1000).prefetch(buffer_size=tf.data.AUTOTUNE)
+val_ds = val_ds.cache().shuffle(1000).prefetch(buffer_size=tf.data.AUTOTUNE)
+test_ds = test_ds.cache().shuffle(1000).prefetch(buffer_size=tf.data.AUTOTUNE)
+resize_and_rescale = Sequential([
+  Resizing(IMAGE_SIZE, IMAGE_SIZE),
+  Rescaling(1./255),
+])
+data_augmentation = Sequential([
+  RandomFlip("horizontal_and_vertical"),
+  RandomRotation(0.2),
+])
+train_ds = train_ds.map(
+    lambda x, y: (data_augmentation(x, training=True), y)
+).prefetch(buffer_size=tf.data.AUTOTUNE)
+input_shape = (BATCH_SIZE, IMAGE_SIZE, IMAGE_SIZE, CHANNELS)
+n_classes = 3
 
+model = models.Sequential([
+    resize_and_rescale,
+    layers.Conv2D(32, kernel_size = (3,3), activation='relu', input_shape=input_shape),
+    layers.MaxPooling2D((2, 2)),
+    layers.Conv2D(64,  kernel_size = (3,3), activation='relu'),
+    layers.MaxPooling2D((2, 2)),
+    layers.Conv2D(64,  kernel_size = (3,3), activation='relu'),
+    layers.MaxPooling2D((2, 2)),
+    layers.Conv2D(64, (3, 3), activation='relu'),
+    layers.MaxPooling2D((2, 2)),
+    layers.Conv2D(64, (3, 3), activation='relu'),
+    layers.MaxPooling2D((2, 2)),
+    layers.Conv2D(64, (3, 3), activation='relu'),
+    layers.MaxPooling2D((2, 2)),
+    layers.Flatten(),
+    layers.Dense(64, activation='relu'),
+    layers.Dense(n_classes, activation='softmax'),
+])
 
-image_list, label_list = [], []
-try:
-    print("[INFO] Loading images ...")
-    root_dir = listdir(directory_root)
-    for directory in root_dir :
-        # remove .DS_Store from list
-        if directory == ".DS_Store" :
-            root_dir.remove(directory)
-
-    for plant_folder in root_dir :
-        plant_disease_folder_list = listdir(f"{directory_root}/{plant_folder}")
-        
-        for disease_folder in plant_disease_folder_list :
-            # remove .DS_Store from list
-            if disease_folder == ".DS_Store" :
-                plant_disease_folder_list.remove(disease_folder)
-
-        for plant_disease_folder in plant_disease_folder_list:
-            print(f"[INFO] Processing {plant_disease_folder} ...")
-            plant_disease_image_list = listdir(f"{directory_root}/{plant_folder}/{plant_disease_folder}/")
-                
-            for single_plant_disease_image in plant_disease_image_list :
-                if single_plant_disease_image == ".DS_Store" :
-                    plant_disease_image_list.remove(single_plant_disease_image)
-
-            for image in plant_disease_image_list[:200]:
-                image_directory = f"{directory_root}/{plant_folder}/{plant_disease_folder}/{image}"
-                if image_directory.endswith(".jpg") == True or image_directory.endswith(".JPG") == True:
-                    image_list.append(convert_image_to_array(image_directory))
-                    label_list.append(plant_disease_folder)
-except Exception as e:
-    print(f"Error : {e}")
-image_size = len(image_list)
-image_size = len(image_list)
-
-label_binarizer = LabelBinarizer()
-image_labels = label_binarizer.fit_transform(label_list)
-pickle.dump(label_binarizer,open('label_transform.pkl', 'wb'))
-n_classes = len(label_binarizer.classes_)
-print(label_binarizer.classes_)
-
-print(label_binarizer.classes_)
-
-np_image_list = np.array(image_list, dtype=np.float16) / 225.0
-
-print("[INFO] Spliting data to train, test")
-x_train, x_test, y_train, y_test = train_test_split(np_image_list, image_labels, test_size=0.2, random_state = 42)
-
-aug = ImageDataGenerator(
-    rotation_range=25, width_shift_range=0.1,
-    height_shift_range=0.1, shear_range=0.2, 
-    zoom_range=0.2,horizontal_flip=True, 
-    fill_mode="nearest")
-
-model = Sequential()
-inputShape = (height, width, depth)
-chanDim = -1
-if K.image_data_format() == "channels_first":
-    inputShape = (depth, height, width)
-    chanDim = 1
-model.add(Conv2D(32, (3, 3), padding="same",input_shape=inputShape))
-model.add(Activation("relu"))
-model.add(BatchNormalization(axis=chanDim))
-model.add(MaxPooling2D(pool_size=(3, 3)))
-model.add(Dropout(0.25))
-model.add(Conv2D(64, (3, 3), padding="same"))
-model.add(Activation("relu"))
-model.add(BatchNormalization(axis=chanDim))
-model.add(Conv2D(64, (3, 3), padding="same"))
-model.add(Activation("relu"))
-model.add(BatchNormalization(axis=chanDim))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Dropout(0.25))
-model.add(Conv2D(128, (3, 3), padding="same"))
-model.add(Activation("relu"))
-model.add(BatchNormalization(axis=chanDim))
-model.add(Conv2D(128, (3, 3), padding="same"))
-model.add(Activation("relu"))
-model.add(BatchNormalization(axis=chanDim))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Dropout(0.25))
-model.add(Flatten())
-model.add(Dense(1024))
-model.add(Activation("relu"))
-model.add(BatchNormalization())
-model.add(Dropout(0.5))
-model.add(Dense(n_classes))
-model.add(Activation("softmax"))
-
-opt = Adam(lr=INIT_LR, decay=INIT_LR / EPOCHS)
-# distribution
-model.compile(loss="binary_crossentropy", optimizer=opt,metrics=["accuracy"])
-# train the network
-print("[INFO] training network...")
-
-history = model.fit_generator(
-    aug.flow(x_train, y_train, batch_size=BS),
-    validation_data=(x_test, y_test),
-    steps_per_epoch=len(x_train) // BS,
-    epochs=EPOCHS, verbose=1
-    )
-
+model.build(input_shape=input_shape)
+model.summary()
+model.compile(
+    optimizer='adam',
+    loss=SparseCategoricalCrossentropy(from_logits=False),
+    metrics=['accuracy']
+)
+history = model.fit(
+    train_ds,
+    batch_size=BATCH_SIZE,
+    validation_data=val_ds,
+    verbose=1,
+    epochs=50,
+)
+scores = model.evaluate(test_ds)
+scores
+history
 acc = history.history['accuracy']
 val_acc = history.history['val_accuracy']
+
 loss = history.history['loss']
 val_loss = history.history['val_loss']
-epochs = range(1, len(acc) + 1)
-#Train and validation accuracy
-plt.plot(epochs, acc, 'b', label='Training accurarcy')
-plt.plot(epochs, val_acc, 'r', label='Validation accurarcy')
-plt.title('Training and Validation accurarcy')
-plt.legend()
+plt.figure(figsize=(8, 8))
+plt.subplot(1, 2, 1)
+plt.plot(range(EPOCHS), acc, label='Training Accuracy')
+plt.plot(range(EPOCHS), val_acc, label='Validation Accuracy')
+plt.legend(loc='lower right')
+plt.title('Training and Validation Accuracy')
 
-plt.figure()
-#Train and validation loss
-plt.plot(epochs, loss, 'b', label='Training loss')
-plt.plot(epochs, val_loss, 'r', label='Validation loss')
-plt.title('Training and Validation loss')
-plt.legend()
+plt.subplot(1, 2, 2)
+plt.plot(range(EPOCHS), loss, label='Training Loss')
+plt.plot(range(EPOCHS), val_loss, label='Validation Loss')
+plt.legend(loc='upper right')
+plt.title('Training and Validation Loss')
 plt.show()
-
-print("[INFO] Calculating model accuracy")
-scores = model.evaluate(x_test, y_test)
-print(f"Test Accuracy: {scores[1]*100}")
-
-# save the model to disk
-print("[INFO] Saving model...")
-pickle.dump(model,open('cnn_model.pkl', 'wb'))
+model.save("../potatoes.h5")
